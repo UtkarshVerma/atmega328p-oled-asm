@@ -1,3 +1,5 @@
+; vim:ft=avra
+
   .device atmega328p
 
   .equ RAMEND = 0x8ff   ; End of user RAM
@@ -21,7 +23,7 @@ main:
   ldi r16, high(RAMEND) ; 0x08
   out SPH, r16
 
-  ldi r16, 0x10         ; set port PB5 to output mode
+  ldi r16, 0x20         ; set port PB5 to output mode
   out DDRB, r16
 
   clr r17
