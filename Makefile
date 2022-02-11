@@ -6,10 +6,10 @@ FUSES = -U lfuse:w:0xf2:m
 all: main.hex
 
 main.hex: main.asm
-	avra main.asm
+	avra main.asm -l main.lst -e /dev/null 2>&1 | grep -v m328pdef.inc
 
 flash: all
-	avrdude $(PROGRAMMER) -U flash:w:main.hex:i
+	avrdude $(PROGRAMMER) -D -U flash:w:main.hex:i
 
 fuses:
 	avrdude $(PROGRAMMER) $(FUSES)
@@ -19,4 +19,4 @@ bootloader:
 
 .PHONY: clean
 clean:
-	rm main.hex main.eep.hex main.obj
+	rm -f main.hex main.obj main.lst
