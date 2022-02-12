@@ -9,7 +9,7 @@ More details about this project can be found on my blog.
 - [`avra`](https://github.com/Ro5bert/avra): The AVR assembler
 - [`avrdude`](https://www.nongnu.org/avrdude): For flashing the ATmega328P
 - [`make`](https://www.gnu.org/software/make): For build tasks like `make flash`
-- [python](https://www.python.org): For preprocessing the video
+- [`python`](https://www.python.org): For preprocessing the video
 
 ## Usage
 Here is a YouTube video of me explaining how to use this project:
