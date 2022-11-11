@@ -1,0 +1,912 @@
+
+AVRA   Ver. 1.4.2 main.asm Tue Nov  8 21:42:29 2022
+
+
+         ; vim:ft=avra:shiftwidth=2:tabstop=2:expandtab:
+          .list
+         
+          main:
+C:000000 d168        rcall oledInit
+C:000001 d012        rcall sdInit
+C:000002   +    storeAddress 0
+C:000002 930f      push r16
+C:000003 e0f5      ldi zh, high(ADDRESS)
+C:000004 e0e5      ldi zl, low(ADDRESS)
+         
+C:000005 e000      ldi r16, byte4(0)
+C:000006 9301      st z+, r16
+C:000007 e000      ldi r16, byte3(0)
+C:000008 9301      st z+, r16
+C:000009 e000      ldi r16, byte2(0)
+C:00000a 9301      st z+, r16
+C:00000b e000      ldi r16, low(0)
+C:00000c 9301      st z+, r16
+         
+C:00000d 910f      pop r16
+         
+          loop:
+C:00000e e0d1        ldi yh, high(FRAME_BUF)
+C:00000f e0c0        ldi yl, low(FRAME_BUF)
+C:000010 d023        rcall sdReadFrame
+C:000011 d053        rcall updateAddress
+C:000012 d1de        rcall oledWrite
+C:000013 cffa        rjmp loop
+         
+         ; TODO: cmdAttempts, OCR checking
+          sdInit:
+C:000014 d211        rcall spiInit
+C:000015 d10a        rcall sdPowerUpSeq
+          loop5:
+C:000016 d118        rcall sdGoIdle
+C:000017 9300 0500   sts RESP, r16
+C:000019 3001        cpi r16, 0x01
+C:00001a f7d9        brne loop5
+         
+C:00001b d0ce        rcall sdSendIfCond
+C:00001c 9110 0500   lds r17, RESP
+C:00001e 2f01        mov r16, r17
+C:00001f 3011        cpi r17, 0x01
+C:000020 f491        brne exit6
+         
+           ; Check echo pattern
+C:000021 9110 0504   lds r17, RESP+4
+C:000023 3a1a        cpi r17, 0xaa
+C:000024 f471        brne exit6
+         
+          loop2:
+C:000025 d08d        rcall sdSendApp
+C:000026 9300 0500   sts RESP, r16
+C:000028 3002        cpi r16, 2
+C:000029 f418        brsh skip1
+         
+C:00002a d067        rcall sdSendOpCond
+C:00002b 9300 0500   sts RESP, r16
+          skip1:
+C:00002d   +    delay 10
+C:00002d e08a      ldi r24, low(10)
+C:00002e e090      ldi r25, high(10)
+C:00002f d203      rcall delay
+C:000030 3000        cpi r16, SD_READY
+C:000031 f799        brne loop2
+         
+C:000032 d040        rcall sdReadOCR
+          exit6:
+C:000033 9508        ret
+         
+         ; TODO: readAttempts, return value
+         ; Read one frame from SD card and write it to `FRAME_BUF`
+          sdReadFrame:
+C:000034 ef0f        ldi r16, 0xff
+C:000035 9300 0509   sts TOKEN, r16                 ; Set TOKEN to none
+         
+           ; Enable the card
+C:000037   +    spiTransfer 0xff
+C:000037   +  spiTransmit 0xff
+C:000037 ef0f      ldi r16, 0xff
+C:000038 d1f3      rcall spiTransmit
+C:000039 d1f7      rcall spiReceive
+C:00003a 982a        cbi PORT_SPI, SS
+C:00003b   +    spiTransfer 0xff
+C:00003b   +  spiTransmit 0xff
+C:00003b ef0f      ldi r16, 0xff
+C:00003c d1ef      rcall spiTransmit
+C:00003d d1f3      rcall spiReceive
+         
+C:00003e e102        ldi r16, CMD18
+C:00003f e010        ldi r17, CMD18_CRC
+C:000040 d118        rcall sdCmd
+         
+C:000041 d10e        rcall sdReadRes1
+C:000042 3f0f        cpi r16, 0xff
+C:000043 f101        breq exit2
+           
+           ; Max attempts
+C:000044 e1eb        ldi zl, low(SD_MAX_READ_ATTEMPTS)
+C:000045 e0f6        ldi zh, high(SD_MAX_READ_ATTEMPTS)
+          loop3:
+C:000046   +    spiTransfer 0xff
+C:000046   +  spiTransmit 0xff
+C:000046 ef0f      ldi r16, 0xff
+C:000047 d1e4      rcall spiTransmit
+C:000048 d1e8      rcall spiReceive
+C:000049 3f0f        cpi r16, 0xff
+C:00004a f411        brne exit3
+C:00004b 9731        sbiw z, 1
+C:00004c f7c9        brne loop3
+          exit3:
+C:00004d 930f        push r16
+C:00004e 3f0e        cpi r16, 0xfe
+C:00004f f489        brne exit4
+         
+C:000050 e082        ldi r24, 2  ; Read 2 blocks
+          readBlocks:
+C:000051 e0b2        ldi xh, high(512)
+C:000052 e0a0        ldi xl, low(512)
+          readBlock:
+C:000053   +    spiTransfer 0xff
+C:000053   +  spiTransmit 0xff
+C:000053 ef0f      ldi r16, 0xff
+C:000054 d1d7      rcall spiTransmit
+C:000055 d1db      rcall spiReceive
+C:000056 9309        st y+, r16
+C:000057 9711        sbiw x, 1
+C:000058 f7d1        brne readBlock
+         
+          discardCRC:
+C:000059   +    spiTransfer 0xff
+C:000059   +  spiTransmit 0xff
+C:000059 ef0f      ldi r16, 0xff
+C:00005a d1d1      rcall spiTransmit
+C:00005b d1d5      rcall spiReceive
+C:00005c 3f0e        cpi r16, 0xfe
+C:00005d f7d9        brne discardCRC
+         
+C:00005e 958a        dec r24
+C:00005f f789        brne readBlocks
+         
+C:000060 d073        rcall sdStopTransmission
+          exit4:
+C:000061 910f        pop r16
+C:000062 9300 0509   sts TOKEN, r16
+          exit2:
+C:000064 9508        ret
+         
+          updateAddress:
+C:000065 93df        push yh
+C:000066 93cf        push yl
+         
+           ; Increment address by two blocks
+C:000067 91f0 0507   lds zh, ADDRESS+2
+C:000069 91e0 0508   lds zl, ADDRESS+3
+C:00006b 9632        adiw z, 2
+C:00006c 93f0 0507   sts ADDRESS+2, zh
+C:00006e 93e0 0508   sts ADDRESS+3, zl
+         
+C:000070 91cf        pop yl
+C:000071 91df        pop yh
+C:000072 9508        ret
+         
+         ; DONE
+          sdReadOCR:
+C:000073   +    spiTransfer 0xff
+C:000073   +  spiTransmit 0xff
+C:000073 ef0f      ldi r16, 0xff
+C:000074 d1b7      rcall spiTransmit
+C:000075 d1bb      rcall spiReceive
+C:000076 982a        cbi PORT_SPI, SS
+C:000077   +    spiTransfer 0xff
+C:000077   +  spiTransmit 0xff
+C:000077 ef0f      ldi r16, 0xff
+C:000078 d1b3      rcall spiTransmit
+C:000079 d1b7      rcall spiReceive
+         
+C:00007a   +    sdCommand CMD58, CMD58_ARG, CMD58_CRC
+C:00007a e30a      ldi r16, CMD58
+C:00007b   +  storeAddress CMD58_ARG
+C:00007b 930f      push r16
+C:00007c e0f5      ldi zh, high(ADDRESS)
+C:00007d e0e5      ldi zl, low(ADDRESS)
+         
+C:00007e e000      ldi r16, byte4(CMD58_ARG)
+C:00007f 9301      st z+, r16
+C:000080 e000      ldi r16, byte3(CMD58_ARG)
+C:000081 9301      st z+, r16
+C:000082 e000      ldi r16, byte2(CMD58_ARG)
+C:000083 9301      st z+, r16
+C:000084 e000      ldi r16, low(CMD58_ARG)
+C:000085 9301      st z+, r16
+         
+C:000086 910f      pop r16
+C:000087 e010      ldi r17, CMD58_CRC
+C:000088 d0d0      rcall sdCmd
+         
+C:000089 d07f        rcall sdReadRes7
+         
+C:00008a   +    spiTransfer 0xff
+C:00008a   +  spiTransmit 0xff
+C:00008a ef0f      ldi r16, 0xff
+C:00008b d1a0      rcall spiTransmit
+C:00008c d1a4      rcall spiReceive
+C:00008d 9a2a        sbi PORT_SPI, SS
+C:00008e   +    spiTransfer 0xff
+C:00008e   +  spiTransmit 0xff
+C:00008e ef0f      ldi r16, 0xff
+C:00008f d19c      rcall spiTransmit
+C:000090 d1a0      rcall spiReceive
+C:000091 9508        ret
+         
+          sdSendOpCond:
+C:000092   +    spiTransfer 0xff
+C:000092   +  spiTransmit 0xff
+C:000092 ef0f      ldi r16, 0xff
+C:000093 d198      rcall spiTransmit
+C:000094 d19c      rcall spiReceive
+C:000095 982a        cbi PORT_SPI, SS
+C:000096   +    spiTransfer 0xff
+C:000096   +  spiTransmit 0xff
+C:000096 ef0f      ldi r16, 0xff
+C:000097 d194      rcall spiTransmit
+C:000098 d198      rcall spiReceive
+         
+C:000099   +    sdCommand ACMD41, ACMD41_ARG, ACMD41_CRC
+C:000099 e209      ldi r16, ACMD41
+C:00009a   +  storeAddress ACMD41_ARG
+C:00009a 930f      push r16
+C:00009b e0f5      ldi zh, high(ADDRESS)
+C:00009c e0e5      ldi zl, low(ADDRESS)
+         
+C:00009d e400      ldi r16, byte4(ACMD41_ARG)
+C:00009e 9301      st z+, r16
+C:00009f e000      ldi r16, byte3(ACMD41_ARG)
+C:0000a0 9301      st z+, r16
+C:0000a1 e000      ldi r16, byte2(ACMD41_ARG)
+C:0000a2 9301      st z+, r16
+C:0000a3 e000      ldi r16, low(ACMD41_ARG)
+C:0000a4 9301      st z+, r16
+         
+C:0000a5 910f      pop r16
+C:0000a6 e010      ldi r17, ACMD41_CRC
+C:0000a7 d0b1      rcall sdCmd
+         
+C:0000a8 d0a7        rcall sdReadRes1
+C:0000a9 930f        push r16
+         
+C:0000aa   +    spiTransfer 0xff
+C:0000aa   +  spiTransmit 0xff
+C:0000aa ef0f      ldi r16, 0xff
+C:0000ab d180      rcall spiTransmit
+C:0000ac d184      rcall spiReceive
+C:0000ad 9a2a        sbi PORT_SPI, SS
+C:0000ae   +    spiTransfer 0xff
+C:0000ae   +  spiTransmit 0xff
+C:0000ae ef0f      ldi r16, 0xff
+C:0000af d17c      rcall spiTransmit
+C:0000b0 d180      rcall spiReceive
+         
+C:0000b1 910f        pop r16
+C:0000b2 9508        ret
+         
+          sdSendApp:
+C:0000b3   +    spiTransfer 0xff
+C:0000b3   +  spiTransmit 0xff
+C:0000b3 ef0f      ldi r16, 0xff
+C:0000b4 d177      rcall spiTransmit
+C:0000b5 d17b      rcall spiReceive
+C:0000b6 982a        cbi PORT_SPI, SS
+C:0000b7   +    spiTransfer 0xff
+C:0000b7   +  spiTransmit 0xff
+C:0000b7 ef0f      ldi r16, 0xff
+C:0000b8 d173      rcall spiTransmit
+C:0000b9 d177      rcall spiReceive
+         
+C:0000ba   +    sdCommand CMD55, CMD55_ARG, CMD55_CRC
+C:0000ba e307      ldi r16, CMD55
+C:0000bb   +  storeAddress CMD55_ARG
+C:0000bb 930f      push r16
+C:0000bc e0f5      ldi zh, high(ADDRESS)
+C:0000bd e0e5      ldi zl, low(ADDRESS)
+         
+C:0000be e000      ldi r16, byte4(CMD55_ARG)
+C:0000bf 9301      st z+, r16
+C:0000c0 e000      ldi r16, byte3(CMD55_ARG)
+C:0000c1 9301      st z+, r16
+C:0000c2 e000      ldi r16, byte2(CMD55_ARG)
+C:0000c3 9301      st z+, r16
+C:0000c4 e000      ldi r16, low(CMD55_ARG)
+C:0000c5 9301      st z+, r16
+         
+C:0000c6 910f      pop r16
+C:0000c7 e010      ldi r17, CMD55_CRC
+C:0000c8 d090      rcall sdCmd
+         
+C:0000c9 d086        rcall sdReadRes1
+C:0000ca 930f        push r16
+         
+C:0000cb   +    spiTransfer 0xff
+C:0000cb   +  spiTransmit 0xff
+C:0000cb ef0f      ldi r16, 0xff
+C:0000cc d15f      rcall spiTransmit
+C:0000cd d163      rcall spiReceive
+C:0000ce 9a2a        sbi PORT_SPI, SS
+C:0000cf   +    spiTransfer 0xff
+C:0000cf   +  spiTransmit 0xff
+C:0000cf ef0f      ldi r16, 0xff
+C:0000d0 d15b      rcall spiTransmit
+C:0000d1 d15f      rcall spiReceive
+         
+C:0000d2 910f        pop r16
+C:0000d3 9508        ret
+         
+          sdStopTransmission:
+           ; Assert SS
+C:0000d4   +    spiTransfer 0xff
+C:0000d4   +  spiTransmit 0xff
+C:0000d4 ef0f      ldi r16, 0xff
+C:0000d5 d156      rcall spiTransmit
+C:0000d6 d15a      rcall spiReceive
+C:0000d7 982a        cbi PORT_SPI, SS
+C:0000d8   +    spiTransfer 0xff
+C:0000d8   +  spiTransmit 0xff
+C:0000d8 ef0f      ldi r16, 0xff
+C:0000d9 d152      rcall spiTransmit
+C:0000da d156      rcall spiReceive
+         
+C:0000db e00c        ldi r16, CMD12
+C:0000dc e010        ldi r17, CMD12_CRC
+C:0000dd d07b        rcall sdCmd
+         
+           ; Skip a stuff byte
+C:0000de   +    spiTransfer 0xff
+C:0000de   +  spiTransmit 0xff
+C:0000de ef0f      ldi r16, 0xff
+C:0000df d14c      rcall spiTransmit
+C:0000e0 d150      rcall spiReceive
+C:0000e1 d06e        rcall sdReadRes1
+         
+           ; Deselect SD card
+C:0000e2   +    spiTransfer 0xff
+C:0000e2   +  spiTransmit 0xff
+C:0000e2 ef0f      ldi r16, 0xff
+C:0000e3 d148      rcall spiTransmit
+C:0000e4 d14c      rcall spiReceive
+C:0000e5 9a2a        sbi PORT_SPI, SS
+C:0000e6   +    spiTransfer 0xff
+C:0000e6   +  spiTransmit 0xff
+C:0000e6 ef0f      ldi r16, 0xff
+C:0000e7 d144      rcall spiTransmit
+C:0000e8 d148      rcall spiReceive
+C:0000e9 9508        ret
+         
+         ; DONE
+          sdSendIfCond:
+           ; Assert SS
+C:0000ea   +    spiTransfer 0xff
+C:0000ea   +  spiTransmit 0xff
+C:0000ea ef0f      ldi r16, 0xff
+C:0000eb d140      rcall spiTransmit
+C:0000ec d144      rcall spiReceive
+C:0000ed 982a        cbi PORT_SPI, SS
+C:0000ee   +    spiTransfer 0xff
+C:0000ee   +  spiTransmit 0xff
+C:0000ee ef0f      ldi r16, 0xff
+C:0000ef d13c      rcall spiTransmit
+C:0000f0 d140      rcall spiReceive
+         
+C:0000f1   +    sdCommand CMD8, CMD8_ARG, CMD8_CRC
+C:0000f1 e008      ldi r16, CMD8
+C:0000f2   +  storeAddress CMD8_ARG
+C:0000f2 930f      push r16
+C:0000f3 e0f5      ldi zh, high(ADDRESS)
+C:0000f4 e0e5      ldi zl, low(ADDRESS)
+         
+C:0000f5 e000      ldi r16, byte4(CMD8_ARG)
+C:0000f6 9301      st z+, r16
+C:0000f7 e000      ldi r16, byte3(CMD8_ARG)
+C:0000f8 9301      st z+, r16
+C:0000f9 e001      ldi r16, byte2(CMD8_ARG)
+C:0000fa 9301      st z+, r16
+C:0000fb ea0a      ldi r16, low(CMD8_ARG)
+C:0000fc 9301      st z+, r16
+         
+C:0000fd 910f      pop r16
+C:0000fe e816      ldi r17, CMD8_CRC
+C:0000ff d059      rcall sdCmd
+C:000100 d008        rcall sdReadRes7
+         
+           ; Deselect SD card
+C:000101   +    spiTransfer 0xff
+C:000101   +  spiTransmit 0xff
+C:000101 ef0f      ldi r16, 0xff
+C:000102 d129      rcall spiTransmit
+C:000103 d12d      rcall spiReceive
+C:000104 9a2a        sbi PORT_SPI, SS
+C:000105   +    spiTransfer 0xff
+C:000105   +  spiTransmit 0xff
+C:000105 ef0f      ldi r16, 0xff
+C:000106 d125      rcall spiTransmit
+C:000107 d129      rcall spiReceive
+C:000108 9508        ret
+         
+         ; DONE
+          sdReadRes7:
+C:000109 e0f5        ldi zh, high(RESP)
+C:00010a e0e0        ldi zl, low(RESP)
+         
+C:00010b d044        rcall sdReadRes1
+C:00010c 9301        st z+, r16
+         
+C:00010d 3002        cpi r16, 2
+C:00010e f480        brsh exit5
+         
+C:00010f   +    spiTransfer 0xff
+C:00010f   +  spiTransmit 0xff
+C:00010f ef0f      ldi r16, 0xff
+C:000110 d11b      rcall spiTransmit
+C:000111 d11f      rcall spiReceive
+C:000112 9301        st z+, r16
+C:000113   +    spiTransfer 0xff
+C:000113   +  spiTransmit 0xff
+C:000113 ef0f      ldi r16, 0xff
+C:000114 d117      rcall spiTransmit
+C:000115 d11b      rcall spiReceive
+C:000116 9301        st z+, r16
+C:000117   +    spiTransfer 0xff
+C:000117   +  spiTransmit 0xff
+C:000117 ef0f      ldi r16, 0xff
+C:000118 d113      rcall spiTransmit
+C:000119 d117      rcall spiReceive
+C:00011a 9301        st z+, r16
+C:00011b   +    spiTransfer 0xff
+C:00011b   +  spiTransmit 0xff
+C:00011b ef0f      ldi r16, 0xff
+C:00011c d10f      rcall spiTransmit
+C:00011d d113      rcall spiReceive
+C:00011e 9301        st z+, r16
+          exit5:
+C:00011f 9508        ret
+         
+         ; DONE
+          sdPowerUpSeq:
+C:000120 9a2a        sbi PORT_SPI, SS            ; Make sure that SD card is deselected
+C:000121   +    delay 1                     ; Give it time to power on
+C:000121 e081      ldi r24, low(1)
+C:000122 e090      ldi r25, high(1)
+C:000123 d10f      rcall delay
+         
+           ; Send 80 clock cycles for synchronization
+C:000124 e01a        ldi r17, 10
+          loop4:
+C:000125   +    spiTransfer 0xff
+C:000125   +  spiTransmit 0xff
+C:000125 ef0f      ldi r16, 0xff
+C:000126 d105      rcall spiTransmit
+C:000127 d109      rcall spiReceive
+C:000128 951a        dec r17
+C:000129 f7d9        brne loop4
+           
+C:00012a 9a2a        sbi PORT_SPI, SS            ; Deselect SD card
+C:00012b   +    spiTransfer 0xff
+C:00012b   +  spiTransmit 0xff
+C:00012b ef0f      ldi r16, 0xff
+C:00012c d0ff      rcall spiTransmit
+C:00012d d103      rcall spiReceive
+C:00012e 9508        ret
+         
+          sdGoIdle:
+           ; Assert chip select
+C:00012f   +    spiTransfer 0xff
+C:00012f   +  spiTransmit 0xff
+C:00012f ef0f      ldi r16, 0xff
+C:000130 d0fb      rcall spiTransmit
+C:000131 d0ff      rcall spiReceive
+C:000132 982a        cbi PORT_SPI, SS
+C:000133   +    spiTransfer 0xff
+C:000133   +  spiTransmit 0xff
+C:000133 ef0f      ldi r16, 0xff
+C:000134 d0f7      rcall spiTransmit
+C:000135 d0fb      rcall spiReceive
+         
+C:000136   +    sdCommand CMD0, CMD0_ARG, CMD0_CRC
+C:000136 e000      ldi r16, CMD0
+C:000137   +  storeAddress CMD0_ARG
+C:000137 930f      push r16
+C:000138 e0f5      ldi zh, high(ADDRESS)
+C:000139 e0e5      ldi zl, low(ADDRESS)
+         
+C:00013a e000      ldi r16, byte4(CMD0_ARG)
+C:00013b 9301      st z+, r16
+C:00013c e000      ldi r16, byte3(CMD0_ARG)
+C:00013d 9301      st z+, r16
+C:00013e e000      ldi r16, byte2(CMD0_ARG)
+C:00013f 9301      st z+, r16
+C:000140 e000      ldi r16, low(CMD0_ARG)
+C:000141 9301      st z+, r16
+         
+C:000142 910f      pop r16
+C:000143 e914      ldi r17, CMD0_CRC
+C:000144 d014      rcall sdCmd
+C:000145 d00a        rcall sdReadRes1
+C:000146 930f        push r16
+           
+           ; Deselect SD card
+C:000147   +    spiTransfer 0xff
+C:000147   +  spiTransmit 0xff
+C:000147 ef0f      ldi r16, 0xff
+C:000148 d0e3      rcall spiTransmit
+C:000149 d0e7      rcall spiReceive
+C:00014a 9a2a        sbi PORT_SPI, SS
+C:00014b   +    spiTransfer 0xff
+C:00014b   +  spiTransmit 0xff
+C:00014b ef0f      ldi r16, 0xff
+C:00014c d0df      rcall spiTransmit
+C:00014d d0e3      rcall spiReceive
+         
+C:00014e 910f        pop r16
+C:00014f 9508        ret
+         
+          sdReadRes1:
+C:000150 e068        ldi r22, 8
+          loop1:
+C:000151   +    spiTransfer 0xff
+C:000151   +  spiTransmit 0xff
+C:000151 ef0f      ldi r16, 0xff
+C:000152 d0d9      rcall spiTransmit
+C:000153 d0dd      rcall spiReceive
+C:000154 956a        dec r22
+C:000155 f011        breq exit1
+C:000156 3f0f        cpi r16, 0xff
+C:000157 f3c9        breq loop1
+          exit1:
+C:000158 9508        ret
+         
+          sdCmd:
+C:000159 6400        ori r16, 0x40
+C:00015a d0d1        rcall spiTransmit
+         
+C:00015b e0f5        ldi zh, high(ADDRESS)
+C:00015c e0e5        ldi zl, low(ADDRESS)
+         
+C:00015d 9101        ld r16, z+
+C:00015e d0cd        rcall spiTransmit
+C:00015f 9101        ld r16, z+
+C:000160 d0cb        rcall spiTransmit
+C:000161 9101        ld r16, z+
+C:000162 d0c9        rcall spiTransmit
+C:000163 9101        ld r16, z+
+C:000164 d0c7        rcall spiTransmit
+         
+           ; Send CRC
+C:000165 2f01        mov r16, r17
+C:000166 6001        ori r16, 0x01
+C:000167 d0c4        rcall spiTransmit
+C:000168 9508        ret
+         
+          oledInit:
+           ; Initialize two-wire interface
+C:000169 d09c        rcall twiInit
+         
+           ; Start transmission
+C:00016a d0a5        rcall twiStart
+C:00016b   +    twiWrite OLED_ADDRESS<<1    ; Transmit slave address in write mode (R/W# = 0)
+C:00016b 930f      push r16
+C:00016c e708      ldi r16, OLED_ADDRESS<<1
+C:00016d d0ae      rcall twiWrite
+C:00016e 910f      pop r16
+         
+           ; Indicate that multiple commands are going to be sent
+C:00016f   +    twiWrite (OLED_CMD_BYTE|OLED_BYTE_STREAM)
+C:00016f 930f      push r16
+C:000170 e000      ldi r16, (OLED_CMD_BYTE|OLED_BYTE_STREAM)
+C:000171 d0aa      rcall twiWrite
+C:000172 910f      pop r16
+         
+C:000173   +  	twiWrite OLED_DISPLAY_OFF
+C:000173 930f      push r16
+C:000174 ea0e      ldi r16, OLED_DISPLAY_OFF
+C:000175 d0a6      rcall twiWrite
+C:000176 910f      pop r16
+         	; Set mux ration tp select max number of rows - 64
+C:000177   +  	twiWrite OLED_SET_MUX_RATIO
+C:000177 930f      push r16
+C:000178 ea08      ldi r16, OLED_SET_MUX_RATIO
+C:000179 d0a2      rcall twiWrite
+C:00017a 910f      pop r16
+C:00017b   +  	twiWrite 63
+C:00017b 930f      push r16
+C:00017c e30f      ldi r16, 63
+C:00017d d09e      rcall twiWrite
+C:00017e 910f      pop r16
+         
+         	; Set the display offset to 0
+C:00017f   +  	twiWrite OLED_SET_DISPLAY_OFFSET
+C:00017f 930f      push r16
+C:000180 ed03      ldi r16, OLED_SET_DISPLAY_OFFSET
+C:000181 d09a      rcall twiWrite
+C:000182 910f      pop r16
+C:000183   +  	twiWrite 0
+C:000183 930f      push r16
+C:000184 e000      ldi r16, 0
+C:000185 d096      rcall twiWrite
+C:000186 910f      pop r16
+         
+         	; Display start line to 0
+C:000187   +  	twiWrite OLED_SET_DISPLAY_START_LINE
+C:000187 930f      push r16
+C:000188 e400      ldi r16, OLED_SET_DISPLAY_START_LINE
+C:000189 d092      rcall twiWrite
+C:00018a 910f      pop r16
+         	
+         	; Mirror the x-axis. In case you set it up such that the pins are north.
+C:00018b   +  	twiWrite OLED_SET_SEGMENT_REMAP
+C:00018b 930f      push r16
+C:00018c ea01      ldi r16, OLED_SET_SEGMENT_REMAP
+C:00018d d08e      rcall twiWrite
+C:00018e 910f      pop r16
+         		
+         	; Mirror the y-axis. In case you set it up such that the pins are north.
+C:00018f   +  	twiWrite OLED_SET_COM_SCAN_MODE
+C:00018f 930f      push r16
+C:000190 ec08      ldi r16, OLED_SET_COM_SCAN_MODE
+C:000191 d08a      rcall twiWrite
+C:000192 910f      pop r16
+         		
+         	; Default - alternate COM pin map
+C:000193   +  	twiWrite OLED_SET_COM_PIN_MAP
+C:000193 930f      push r16
+C:000194 ed0a      ldi r16, OLED_SET_COM_PIN_MAP
+C:000195 d086      rcall twiWrite
+C:000196 910f      pop r16
+C:000197   +  	twiWrite 0x12
+C:000197 930f      push r16
+C:000198 e102      ldi r16, 0x12
+C:000199 d082      rcall twiWrite
+C:00019a 910f      pop r16
+         	
+           ; set contrast
+C:00019b   +    twiWrite OLED_SET_CONTRAST
+C:00019b 930f      push r16
+C:00019c e801      ldi r16, OLED_SET_CONTRAST
+C:00019d d07e      rcall twiWrite
+C:00019e 910f      pop r16
+C:00019f   +  	twiWrite 0x7F
+C:00019f 930f      push r16
+C:0001a0 e70f      ldi r16, 0x7F
+C:0001a1 d07a      rcall twiWrite
+C:0001a2 910f      pop r16
+         	
+           ; Set display to enable rendering from GDDRAM (Graphic Display Data RAM)
+C:0001a3   +  	twiWrite OLED_DISPLAY_RAM
+C:0001a3 930f      push r16
+C:0001a4 ea04      ldi r16, OLED_DISPLAY_RAM
+C:0001a5 d076      rcall twiWrite
+C:0001a6 910f      pop r16
+           
+           ; Normal mode!
+C:0001a7   +  	twiWrite OLED_DISPLAY_NORMAL
+C:0001a7 930f      push r16
+C:0001a8 ea06      ldi r16, OLED_DISPLAY_NORMAL
+C:0001a9 d072      rcall twiWrite
+C:0001aa 910f      pop r16
+         
+           ; Default oscillator clock
+C:0001ab   +  	twiWrite OLED_SET_DISPLAY_CLK_DIV
+C:0001ab 930f      push r16
+C:0001ac ed05      ldi r16, OLED_SET_DISPLAY_CLK_DIV
+C:0001ad d06e      rcall twiWrite
+C:0001ae 910f      pop r16
+C:0001af   +  	twiWrite 0x80
+C:0001af 930f      push r16
+C:0001b0 e800      ldi r16, 0x80
+C:0001b1 d06a      rcall twiWrite
+C:0001b2 910f      pop r16
+         
+           ; Enable the charge pump
+C:0001b3   +  	twiWrite OLED_SET_CHARGE_PUMP
+C:0001b3 930f      push r16
+C:0001b4 e80d      ldi r16, OLED_SET_CHARGE_PUMP
+C:0001b5 d066      rcall twiWrite
+C:0001b6 910f      pop r16
+C:0001b7   +  	twiWrite 0x14
+C:0001b7 930f      push r16
+C:0001b8 e104      ldi r16, 0x14
+C:0001b9 d062      rcall twiWrite
+C:0001ba 910f      pop r16
+         
+           ; Set precharge cycles to high cap type
+C:0001bb   +  	twiWrite OLED_SET_PRECHARGE
+C:0001bb 930f      push r16
+C:0001bc ed09      ldi r16, OLED_SET_PRECHARGE
+C:0001bd d05e      rcall twiWrite
+C:0001be 910f      pop r16
+C:0001bf   +  	twiWrite 0x22
+C:0001bf 930f      push r16
+C:0001c0 e202      ldi r16, 0x22
+C:0001c1 d05a      rcall twiWrite
+C:0001c2 910f      pop r16
+         
+           ; Set the V_COMH deselect volatage to max
+C:0001c3   +  	twiWrite OLED_SET_VCOMH_DESELCT
+C:0001c3 930f      push r16
+C:0001c4 ed0b      ldi r16, OLED_SET_VCOMH_DESELCT
+C:0001c5 d056      rcall twiWrite
+C:0001c6 910f      pop r16
+C:0001c7   +  	twiWrite 0x30
+C:0001c7 930f      push r16
+C:0001c8 e300      ldi r16, 0x30
+C:0001c9 d052      rcall twiWrite
+C:0001ca 910f      pop r16
+         
+         	; Horizonatal addressing mode - same as the KS108 GLCD
+C:0001cb   +  	twiWrite OLED_SET_MEMORY_ADDR_MODE
+C:0001cb 930f      push r16
+C:0001cc e200      ldi r16, OLED_SET_MEMORY_ADDR_MODE
+C:0001cd d04e      rcall twiWrite
+C:0001ce 910f      pop r16
+C:0001cf   +  	twiWrite 0x00  
+C:0001cf 930f      push r16
+C:0001d0 e000      ldi r16, 0x00
+C:0001d1 d04a      rcall twiWrite
+C:0001d2 910f      pop r16
+         
+           ; Use the full column-range (0-127)
+C:0001d3   +    twiWrite OLED_SET_COLUMN_RANGE
+C:0001d3 930f      push r16
+C:0001d4 e201      ldi r16, OLED_SET_COLUMN_RANGE
+C:0001d5 d046      rcall twiWrite
+C:0001d6 910f      pop r16
+C:0001d7   +    twiWrite 0
+C:0001d7 930f      push r16
+C:0001d8 e000      ldi r16, 0
+C:0001d9 d042      rcall twiWrite
+C:0001da 910f      pop r16
+C:0001db   +    twiWrite 127
+C:0001db 930f      push r16
+C:0001dc e70f      ldi r16, 127
+C:0001dd d03e      rcall twiWrite
+C:0001de 910f      pop r16
+         
+           ; Use the full page-range (0-7)
+C:0001df   +    twiWrite OLED_SET_PAGE_RANGE
+C:0001df 930f      push r16
+C:0001e0 e202      ldi r16, OLED_SET_PAGE_RANGE
+C:0001e1 d03a      rcall twiWrite
+C:0001e2 910f      pop r16
+C:0001e3   +    twiWrite 0
+C:0001e3 930f      push r16
+C:0001e4 e000      ldi r16, 0
+C:0001e5 d036      rcall twiWrite
+C:0001e6 910f      pop r16
+C:0001e7   +    twiWrite 7
+C:0001e7 930f      push r16
+C:0001e8 e007      ldi r16, 7
+C:0001e9 d032      rcall twiWrite
+C:0001ea 910f      pop r16
+         
+         	; Turn the Display ON
+C:0001eb   +  	twiWrite OLED_DISPLAY_ON
+C:0001eb 930f      push r16
+C:0001ec ea0f      ldi r16, OLED_DISPLAY_ON
+C:0001ed d02e      rcall twiWrite
+C:0001ee 910f      pop r16
+         
+C:0001ef d028        rcall twiStop
+C:0001f0 9508        ret
+         
+         ; Write the the frame pointed stored in `FRAME_BUF`
+          oledWrite:
+C:0001f1 e0f1        ldi zh, high(FRAME_BUF)
+C:0001f2 e0e0        ldi zl, low(FRAME_BUF)
+         
+C:0001f3 d01c        rcall twiStart
+C:0001f4   +    twiWrite OLED_ADDRESS<<1
+C:0001f4 930f      push r16
+C:0001f5 e708      ldi r16, OLED_ADDRESS<<1
+C:0001f6 d025      rcall twiWrite
+C:0001f7 910f      pop r16
+C:0001f8   +    twiWrite (OLED_DATA_BYTE|OLED_BYTE_STREAM)
+C:0001f8 930f      push r16
+C:0001f9 e400      ldi r16, (OLED_DATA_BYTE|OLED_BYTE_STREAM)
+C:0001fa d021      rcall twiWrite
+C:0001fb 910f      pop r16
+         
+C:0001fc e018        ldi r17, 8
+          outer:
+C:0001fd e820        ldi r18, 128
+          inner:
+C:0001fe 9101        ld r16, z+
+C:0001ff d01c        rcall twiWrite
+C:000200 952a        dec r18
+C:000201 f7e1        brne inner
+C:000202 951a        dec r17
+C:000203 f7c9        brne outer
+         
+C:000204 d013        rcall twiStop
+C:000205 9508        ret
+         
+         ; Initialise TWI with SCL frequency = 100kHz
+          twiInit:
+           ; Clear prescalar bits (TWSR[0:1])
+C:000206 2777        clr r23
+C:000207 9370 00b9   sts TWSR, r23
+         
+           ; Set TWBR = ((8MHz - 400kHz) - 16) / 2 = 2 for 400kHz SCL frequency
+C:000209 e072        ldi r23, 2
+C:00020a 9370 00b8   sts TWBR, r23
+         
+           ; Enable the two wire interface
+C:00020c e074        ldi r23, 1<<TWEN
+C:00020d 9370 00bc   sts TWCR, r23
+C:00020f 9508        ret
+         
+         ; Transmit a START condition on the I2C bus
+          twiStart:
+           ; Clear TWINT, become the master keeping TWI enabled
+C:000210 ea74        ldi r23, (1<<TWINT)|(1<<TWSTA)|(1<<TWEN)
+C:000211 9370 00bc   sts TWCR, r23
+         
+         ; Wait until transmission is done by checking TWINT
+          wait1:
+C:000213 9170 00bc   lds r23, TWCR
+C:000215 ff77        sbrs r23, TWINT
+C:000216 cffc        rjmp wait1
+C:000217 9508        ret
+         
+         ; Transmit a STOP condition to the bus
+          twiStop:
+           ; Clear TWINT, write STOP in master mode keeping TWI enabled
+C:000218 e974        ldi r23, (1<<TWINT)|(1<<TWSTO)|(1<<TWEN)
+C:000219 9370 00bc   sts TWCR, r23
+C:00021b 9508        ret
+         
+         ; Send value stored in `r16` to the bus
+          twiWrite:
+C:00021c 9300 00bb   sts TWDR, r16       ; Store value to data register
+           
+           ; Transmit the data
+C:00021e e874        ldi r23, (1<<TWINT)|(1<<TWEN)
+C:00021f 9370 00bc   sts TWCR, r23
+         
+         ; Wait until transmission is done by checking TWINT
+          wait2:
+C:000221 9170 00bc   lds r23, TWCR
+C:000223 ff77        sbrs r23, TWINT
+C:000224 cffc        rjmp wait2
+         
+C:000225 9508        ret
+         
+         ; Initialize MCU as an SPI master
+          spiInit:
+           ; Set MOSI, SCK and SS as outputs
+C:000226 e27c        ldi r23, (1<<MOSI)|(1<<SCK)|(1<<SS)
+C:000227 b974        out DDR_SPI, r23
+         
+           ; Pull SS HIGH as we're not sending anything yet
+C:000228 9a2a        sbi PORT_SPI, SS
+         
+           ; Enable SPI as master and set clock rate = F_CPU/16 (SPR0 = 1, SPR1 = SPI2X = 0)
+C:000229 e571        ldi r23, (1<<SPE)|(1<<MSTR)|(1<<SPR0)
+C:00022a bd7c        out SPCR, r23
+C:00022b 9508        ret
+         
+         ; Transmit data stored in `r16` to the bus
+          spiTransmit:
+C:00022c bd0e        out SPDR, r16
+         
+         ; Wait until transmission is done
+          spiWait:
+C:00022d b57d        in r23, SPSR
+C:00022e ff77        sbrs r23, SPIF      ; Break if SPIF is set
+C:00022f cffd        rjmp spiWait
+         
+C:000230 9508        ret
+         
+         ; Read data on the bus and store it in `r16`
+          spiReceive:
+C:000231 b50e        in r16, SPDR
+C:000232 9508        ret
+         
+         ; Introduce a delay of `[r25 r24]` ms for 8MHz clock
+          delay:                ; (8000 + 2) * r16 + 1 ~= [r25 r24] ms
+C:000233 e163        ldi r22, 19
+          delay1ms:             ; (419 + 2) * 19 + 1 = 8000 clock cycles = 1ms
+C:000234 ed71        ldi r23, 209
+          l1:                   ; 2 * 209 + 1 = 419 clock cycles
+C:000235 957a        dec r23             ; 1 clock cycle
+C:000236 f7f1        brne l1             ; 1 clock cycle + 1 if branching
+         
+C:000237 956a        dec r22
+C:000238 f7d9        brne delay1ms
+         
+C:000239 9701        sbiw r24, 1         ; Decrement word [r25 r24] by 1
+C:00023a f7c1        brne delay
+C:00023b 9508        ret
+Used memory blocks:
+   code      :  Start = 0x0000, End = 0x023B, Length = 0x023C (572 words), Overlap=N
+
+
+Segment usage:
+   Code      :       572 words (1144 bytes)
+   Data      :         0 bytes
+   EEPROM    :         0 bytes
+
+Assembly completed with no errors.

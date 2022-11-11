@@ -403,7 +403,7 @@ oledInit:
 	
   ; Set display to enable rendering from GDDRAM (Graphic Display Data RAM)
 	twiWrite OLED_DISPLAY_RAM
-  
+
   ; Normal mode!
 	twiWrite OLED_DISPLAY_NORMAL
 
